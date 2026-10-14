@@ -316,6 +316,63 @@ class ConfidenceChart(QWidget):
         painter.end()
 
 
+class PerClassF1Chart(QWidget):
+    """F1-scores computed across the labeled test images for one checkpoint.
+
+    This is separate from ConfidenceChart, which shows one image's class
+    probabilities. Each class has one F1-score (not a separate macro F1).
+    """
+
+    DISPLAY_CLASSES = {"black": "Black", "broken": "Broken/Cut", "moldy": "Moldy"}
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.values = None
+        self.setMinimumHeight(240)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def set_scores(self, scores):
+        """Accept a {class_name: f1_value} mapping, or None to reset."""
+        self.values = None if scores is None else dict(scores)
+        self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(QFont("Sans Serif", 13))
+
+        # Use the same label / colored bar / percentage layout as Class Confidence.
+        # Leave a fixed right-side margin for a readable percentage label.
+        left = 130
+        bar_width = max(60, self.width() - left - 96)
+        vertical_gap = 62
+        top = max(20, (self.height() - (2 * vertical_gap + 25)) // 2)
+
+        for index, cls in enumerate(CLASSES):
+            y = top + index * vertical_gap
+            painter.setPen(QColor("#35413c"))
+            painter.drawText(8, y + 19, self.DISPLAY_CLASSES.get(cls, cls.title()))
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#e5e9e2"))
+            painter.drawRoundedRect(left, y, bar_width, 25, 6, 6)
+
+            value = self.values.get(cls) if self.values is not None else None
+            if value is not None:
+                value = max(0.0, min(float(value), 1.0))
+                fill_width = round(bar_width * value)
+                if fill_width > 0:
+                    painter.setBrush(BAR_COLORS.get(cls, QColor("#267452")))
+                    painter.drawRoundedRect(left, y, fill_width, 25, 6, 6)
+                value_text = f"{value:.1%}"
+            else:
+                value_text = "—"
+
+            painter.setPen(QColor("#202b28"))
+            painter.drawText(left + bar_width + 13, y + 19, value_text)
+        painter.end()
+
+
 class PredictionWorker(QThread):
     completed = Signal(object, int, int, object)
 
@@ -501,22 +558,53 @@ class CheckpointTesterWindow(QMainWindow):
         self.summary_info.setWordWrap(True)
         summary_top.addWidget(self.summary_info, 2)
         summary_layout.addLayout(summary_top)
-        metric_row = QHBoxLayout()
+        # Left: stacked overall metrics. Right: F1-score for each defect class.
+        # The summary dropdown above determines which checkpoint/variety is shown.
+        summary_results_row = QHBoxLayout()
+        summary_results_row.setSpacing(16)
+
+        metrics_column = QVBoxLayout()
+        metrics_column.setSpacing(8)
         self.metric_values = {}
-        for label, key in (("Accuracy", "accuracy"), ("Macro Precision", "precision"),
-                           ("Macro Recall", "recall"), ("Macro F1-score", "f1")):
+        for label, key in (("Accuracy", "accuracy"),
+                           ("Macro Precision", "precision"),
+                           ("Macro Recall", "recall"),
+                           ("Macro F1-score", "f1")):
             metric = QFrame()
-            metric.setStyleSheet("QFrame { background: #e7f0eb; border: 1px solid #c3d9cc; border-radius: 8px; }")
-            mlay = QVBoxLayout(metric)
+            metric.setMinimumHeight(72)
+            metric.setStyleSheet(
+                "QFrame { background: #e7f0eb; border: 1px solid #c3d9cc; border-radius: 8px; }"
+            )
+            mlay = QHBoxLayout(metric)
+            mlay.setContentsMargins(16, 10, 16, 10)
             text = QLabel(label)
-            text.setStyleSheet("font-size: 12pt; font-weight: 600; color: #36584a; border: 0;")
+            text.setStyleSheet(
+                "font-size: 13pt; font-weight: 600; color: #36584a; border: 0;"
+            )
             value = QLabel("—")
-            value.setStyleSheet("font-size: 25pt; font-weight: 800; color: #14563f; border: 0;")
-            mlay.addWidget(text)
-            mlay.addWidget(value)
-            metric_row.addWidget(metric, 1)
+            value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            value.setStyleSheet(
+                "font-size: 23pt; font-weight: 800; color: #14563f; border: 0;"
+            )
+            mlay.addWidget(text, 1)
+            mlay.addWidget(value, 0)
+            metrics_column.addWidget(metric)
             self.metric_values[key] = value
-        summary_layout.addLayout(metric_row)
+        summary_results_row.addLayout(metrics_column, 2)
+
+        f1_box = QGroupBox("Per-class F1-scores")
+        f1_box.setMinimumHeight(312)
+        f1_layout = QVBoxLayout(f1_box)
+        f1_layout.setContentsMargins(14, 16, 14, 12)
+        self.class_f1_chart = PerClassF1Chart()
+        f1_layout.addWidget(self.class_f1_chart, 1)
+        f1_note = QLabel("F1 per defect class; Macro F1 is the average of these three scores.")
+        f1_note.setStyleSheet("color: #66736e; font-size: 10pt;")
+        f1_note.setWordWrap(True)
+        f1_layout.addWidget(f1_note)
+        summary_results_row.addWidget(f1_box, 3)
+
+        summary_layout.addLayout(summary_results_row)
         layout.addWidget(summary_box, 0)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -799,6 +887,7 @@ class CheckpointTesterWindow(QMainWindow):
         if metrics is None:
             for value in self.metric_values.values():
                 value.setText("—")
+            self.class_f1_chart.set_scores(None)
             if group_rows:
                 self.summary_info.setText("No ground-truth labels detected. Use a test folder whose parent class folders are black, broken, and moldy.")
             else:
@@ -806,6 +895,9 @@ class CheckpointTesterWindow(QMainWindow):
             return
         for key, label in self.metric_values.items():
             label.setText(f"{metrics[key]:.2%}")
+        self.class_f1_chart.set_scores({
+            cls: metrics["per_class"][cls]["f1"] for cls in CLASSES
+        })
         self.summary_info.setText(
             f"{metrics['correct']} / {metrics['total']} labeled predictions correct. "
             f"{len(group_rows) - metrics['total']} unlabeled predictions excluded. "
