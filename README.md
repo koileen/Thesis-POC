@@ -73,11 +73,86 @@ python -m pip install -r requirements.txt
 
 ## Running the Application
 
+The project provides two testing interfaces: a command-line inference script and a graphical user interface.
+
+### 1. Command-Line Testing
+
+The `test_saved_checkpoint.py` script loads previously trained CNN checkpoints to classify coffee bean images.
+
+**Using a training run directory:**
+
+```bash
+python test_saved_checkpoint.py \
+    --run_dir linuxcheckpoints/example_run \
+    --image coffee_dataset/example.jpg
+```
+
+The run directory must contain `best_model.pth` and `results.json`. The script reads model configuration information from the metadata file.
+
+**Using a checkpoint directly:**
+
+```bash
+python test_saved_checkpoint.py \
+    --checkpoint linuxcheckpoints/example_run/best_model.pth \
+    --model squeezenet \
+    --dropout 0.2 \
+    --image coffee_dataset/example.jpg
+```
+
+When using `--checkpoint`, the model architecture and dropout rate must be specified manually.
+
+**Classifying multiple images and exporting results:**
+
+```bash
+python test_saved_checkpoint.py \
+    --checkpoint linuxcheckpoints/example_run/best_model.pth \
+    --model squeezenet \
+    --dropout 0.2 \
+    --image coffee_dataset/ \
+    --recursive \
+    --output predictions.csv
+```
+
+### Available Command-Line Arguments
+
+| Argument | Description |
+|---|---|
+| `--run_dir` | Run folder containing checkpoint and metadata |
+| `--checkpoint` | Direct path to a saved checkpoint |
+| `--image` | Input image or image directory |
+| `--model` | CNN architecture (required with `--checkpoint`) |
+| `--dropout` | Dropout value (required with `--checkpoint`) |
+| `--recursive` | Search image directories recursively |
+| `--output` | Save prediction results as a CSV file |
+| `--device` | Select CPU or CUDA |
+
+### Classification Outputs
+
+The application classifies dried raw coffee bean images into three defect categories:
+
+- **Black**
+- **Broken**
+- **Moldy**
+
+For each image, the command-line tool displays its predicted class, confidence score, and the class probabilities.
+
+Results can optionally be exported to a CSV file for further analysis.
+
+### 2. Graphical User Interface
+
+Run the Qt-based graphical application using:
+
 ```bash
 python test_saved_checkpoint_qt.py
 ```
 
-The application requires compatible trained checkpoints and coffee bean image data, which are not included in this repository.
+Refer to `GUI_instruction.txt` for additional usage instructions.
+
+### Model Checkpoints
+
+Trained model files are not included in the Git repository. Users must provide compatible checkpoint files before running inference.
+
+The command-line tool expects checkpoints containing a `model_state_dict` compatible with the architecture defined in `model_factory.py`.
 
 ## Dataset and Model Checkpoints
 
