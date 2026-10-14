@@ -1,0 +1,74 @@
+
+# ==========================================
+# THESIS POC - GITIGNORE
+# ==========================================
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python tooling and testing
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# ==========================================
+# DATASETS
+# ==========================================
+
+coffee_dataset/
+
+# ==========================================
+# TRAINED MODEL CHECKPOINTS
+# ==========================================
+
+linuxcheckpoints/
+
+# Model weights outside checkpoint folders
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.hdf5
+*.onnx
+*.safetensors
+
+# ==========================================
+# ENVIRONMENT VARIABLES
+# ==========================================
+
+.env
+.env.*
+!.env.example
+
+# ==========================================
+# TEMPORARY FILES
+# ==========================================
+
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+
+# ==========================================
+# EDITOR SETTINGS
+# ==========================================
+
+.vscode/
+.idea/

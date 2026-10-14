@@ -1,0 +1,21 @@
+Coffee Bean Defect Classification
+
+Requirements
+
+Install PyTorch and torchvision for your CUDA version, then:
+
+python3 -m venv .venv
+source .venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu ; for CPU instead of using GPU
+pip install timm pillow
+
+
+++ to check if may TKinter kasama cuz need that for the GUI
+python -c "import tkinter; print('Tkinter is available')"
+
+
+to start the GUI
+
+python test_saved_checkpoint_gui.py
