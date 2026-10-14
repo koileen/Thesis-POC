@@ -385,6 +385,7 @@ class CheckpointTesterWindow(QMainWindow):
         self.setMinimumSize(950, 650)
         self.runs = discover_runs()
         self.rows = []
+        self.summary_groups = {}
         self.preview_source = QPixmap()
         self.worker = None
         self._build_ui()
@@ -494,7 +495,7 @@ class CheckpointTesterWindow(QMainWindow):
         self.summary_choice = ArrowComboBox()
         self.summary_choice.setMinimumHeight(46)
         self.summary_choice.setMinimumWidth(440)
-        self.summary_choice.currentIndexChanged.connect(self._update_summary)
+        self.summary_choice.currentIndexChanged.connect(self._on_summary_choice_changed)
         summary_top.addWidget(self.summary_choice, 1)
         self.summary_info = QLabel("Run a test to calculate performance metrics.")
         self.summary_info.setWordWrap(True)
@@ -521,12 +522,31 @@ class CheckpointTesterWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setMinimumHeight(670)
         splitter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # Results-view filter: unlike Test setup, this only changes which
+        # already-computed predictions are visible. It does not run any model.
+        results_panel = QWidget()
+        results_layout = QVBoxLayout(results_panel)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        results_layout.setSpacing(8)
+        results_title = QLabel("Individual results")
+        results_title.setStyleSheet("font-size: 15pt; font-weight: 700; color: #174e3e;")
+        results_layout.addWidget(results_title)
+        self.result_filter = ArrowComboBox()
+        self.result_filter.setMinimumHeight(52)
+        self.result_filter.setMinimumWidth(355)
+        self.result_filter.setToolTip("Choose which completed checkpoint to display; no rerun required.")
+        self.result_filter.currentIndexChanged.connect(self._filter_result_list)
+        results_layout.addWidget(self.result_filter)
+        self.result_count = QLabel("Run a test to view individual predictions.")
+        self.result_count.setStyleSheet("color: #66736e; font-size: 11pt;")
+        results_layout.addWidget(self.result_count)
         self.result_list = QListWidget()
-        self.result_list.setMinimumWidth(330)
+        self.result_list.setMinimumWidth(355)
         self.result_list.setWordWrap(True)
         self.result_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.result_list.currentRowChanged.connect(self._show_result)
-        splitter.addWidget(self.result_list)
+        results_layout.addWidget(self.result_list, 1)
+        splitter.addWidget(results_panel)
 
         detail = QWidget()
         detail_layout = QVBoxLayout(detail)
@@ -586,11 +606,19 @@ class CheckpointTesterWindow(QMainWindow):
         )
 
     def _clear_filter_selections(self):
-        """Reset all test-setup multi-select filters to All without reloading checkpoints."""
+        """Clear model filters and selected input, without erasing test results."""
+        # Reset all multi-select filters to All.
         for selector in self.filters.values():
             selector.clear_selection()
+
+        # Forget the previously chosen image or folder.
+        self.input_path = None
+        self.path_label.clear()
+        self.path_label.setToolTip("")
+
+        # Keep the current preview visible; Clear results removes it.
         self._refresh_matches()
-        self.status.setText("Test setup selections cleared (all varieties, models, and optimizers).")
+        self.status.setText("Test setup cleared: filters reset to All and image/folder removed.")
 
     def _choose_image(self):
         path, _ = QFileDialog.getOpenFileName(self, "Choose bean image", str(ROOT), IMAGE_FILTER)
@@ -652,22 +680,11 @@ class CheckpointTesterWindow(QMainWindow):
         self.worker.start()
 
     def _show_results(self, rows, checkpoint_count, image_count, failures):
+        # Keep all predictions in memory; the results dropdown only controls
+        # which ones are displayed in the list.
         self.rows = rows
-        self.result_list.clear()
-        for row in rows:
-            actual = row["actual"] or "actual unknown"
-            text = (
-                f"{Path(row['image']).name}\n"
-                f"{row['prediction'].title()} · {row['confidence']:.1%} · {actual}\n"
-                f"{row['checkpoint']}"
-            )
-            item = QListWidgetItem(text)
-            item.setSizeHint(QSize(310, 99))
-            item.setData(Qt.ItemDataRole.UserRole, self.result_list.count())
-            self.result_list.addItem(item)
         self._populate_summary()
-        if rows:
-            self.result_list.setCurrentRow(0)
+        self._populate_result_filters()
         succeeded = checkpoint_count - len(failures)
         self.status.setText(
             f"Completed {len(rows)} prediction(s) from {succeeded}/{checkpoint_count} checkpoint(s); "
@@ -676,6 +693,89 @@ class CheckpointTesterWindow(QMainWindow):
         self.test_button.setEnabled(True)
         if failures:
             QMessageBox.warning(self, "Checkpoint errors", "\n".join(failures))
+
+    def _populate_result_filters(self):
+        """Offer every completed checkpoint and target variety as a view."""
+        self.result_filter.blockSignals(True)
+        self.result_filter.clear()
+        if self.rows:
+            self.result_filter.addItem(f"All results ({len(self.rows)} predictions)", None)
+            for key, group_rows in sorted(self.summary_groups.items()):
+                run_label = group_rows[0]["checkpoint"]
+                tested = key[1]
+                label = f"{run_label} → {tested} ({len(group_rows)})"
+                self.result_filter.addItem(label, key)
+                self.result_filter.setItemData(
+                    self.result_filter.count() - 1, label,
+                    Qt.ItemDataRole.ToolTipRole
+                )
+            # Show one checkpoint by default, rather than merging predictions
+            # across all selected models and optimizers.
+            self.result_filter.setCurrentIndex(1)
+        self.result_filter.blockSignals(False)
+        self._filter_result_list()
+
+    def _filter_result_list(self, _index=None):
+        """Filter visible rows without changing the stored predictions."""
+        selected_key = self.result_filter.currentData()
+        if selected_key is None:
+            visible = list(enumerate(self.rows))
+        else:
+            visible = [
+                (original_index, row)
+                for original_index, row in enumerate(self.rows)
+                if (row["checkpoint_name"], row["tested_variety"]) == selected_key
+            ]
+
+        self.result_list.blockSignals(True)
+        self.result_list.clear()
+        for original_index, row in visible:
+            actual = row["actual"] or "actual unknown"
+            text = (
+                f"{Path(row['image']).name}\n"
+                f"{row['prediction'].title()} · {row['confidence']:.1%} · {actual}\n"
+                f"{row['checkpoint']}"
+            )
+            item = QListWidgetItem(text)
+            item.setSizeHint(QSize(310, 99))
+            # Preserve the original index even though this list is filtered.
+            item.setData(Qt.ItemDataRole.UserRole, original_index)
+            self.result_list.addItem(item)
+        self.result_list.blockSignals(False)
+
+        self.result_count.setText(
+            f"Showing {len(visible)} of {len(self.rows)} predictions."
+            if self.rows else "Run a test to view individual predictions."
+        )
+
+        if selected_key is not None:
+            # Keep the performance summary aligned with the checkpoint being viewed.
+            summary_index = self.summary_choice.findData(selected_key)
+            if summary_index >= 0 and summary_index != self.summary_choice.currentIndex():
+                self.summary_choice.blockSignals(True)
+                self.summary_choice.setCurrentIndex(summary_index)
+                self.summary_choice.blockSignals(False)
+                self._update_summary()
+
+        if visible:
+            self.result_list.setCurrentRow(0)
+        else:
+            self.prediction.setText("No individual results to display")
+            self.actual.setText("Actual label: unavailable")
+            self.checkpoint.clear()
+            self.chart.set_values([0.0] * len(CLASSES))
+            self.preview_source = QPixmap()
+            self._update_preview()
+
+    def _on_summary_choice_changed(self, _index=None):
+        """Selecting a summary also shows that checkpoint's individual rows."""
+        self._update_summary()
+        key = self.summary_choice.currentData()
+        if key is None:
+            return
+        view_index = self.result_filter.findData(key)
+        if view_index >= 0 and view_index != self.result_filter.currentIndex():
+            self.result_filter.setCurrentIndex(view_index)
 
     def _populate_summary(self):
         self.summary_choice.blockSignals(True)
@@ -715,13 +815,24 @@ class CheckpointTesterWindow(QMainWindow):
     def _show_result(self, index):
         if index < 0 or index >= len(self.rows):
             return
-        row = self.rows[index]
+        item = self.result_list.item(index)
+        if item is None:
+            return
+        original_index = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(original_index, int) or not (0 <= original_index < len(self.rows)):
+            return
+        row = self.rows[original_index]
         self.preview_source = QPixmap(row["image"])
         self._update_preview()
         summary_key = (row["checkpoint_name"], row["tested_variety"])
         idx = self.summary_choice.findData(summary_key)
         if idx >= 0 and idx != self.summary_choice.currentIndex():
+            # When showing All, selecting an image changes the metric summary,
+            # but must not forcibly switch away from the All view.
+            self.summary_choice.blockSignals(True)
             self.summary_choice.setCurrentIndex(idx)
+            self.summary_choice.blockSignals(False)
+            self._update_summary()
         self.prediction.setText(f"Predicted: {row['prediction'].title()} · {row['confidence']:.1%}")
         self.actual.setText(f"Actual label: {row['actual'] or 'unavailable'} · Tested variety: {row['tested_variety']}")
         self.checkpoint.setText(
@@ -732,6 +843,10 @@ class CheckpointTesterWindow(QMainWindow):
     def _clear_results(self):
         self.rows.clear()
         self.result_list.clear()
+        self.result_filter.blockSignals(True)
+        self.result_filter.clear()
+        self.result_filter.blockSignals(False)
+        self.result_count.setText("Run a test to view individual predictions.")
         self.prediction.setText("Choose an image and test matching checkpoints")
         self.actual.setText("Actual label: unavailable")
         self.checkpoint.clear()
@@ -739,8 +854,11 @@ class CheckpointTesterWindow(QMainWindow):
         self.summary_groups = {}
         self.summary_choice.clear()
         self._update_summary()
-        if hasattr(self, "input_path"):
-            self._set_input_path(self.input_path)
+
+        # Clear the image preview with the prediction results.
+        # Do not call _set_input_path here: that would restore the preview.
+        self.preview_source = QPixmap()
+        self._update_preview()
 
 
 def main():
